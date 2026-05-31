@@ -18,9 +18,9 @@ model Analysis {
   email            String?
   name             String?
   score            Int
-  freeIssues       String    // JSON stored as string
-  fullReport       String?   // JSON stored as string (null until paid)
-  reportType       String?   // "one-time" | "subscription"
+  freeIssues       String // JSON stored as string
+  fullReport       String? // JSON stored as string (null until paid)
+  reportType       String? // "one-time" | "subscription"
   stripeSessionId  String?
   stripeCustomerId String?
   paid             Boolean   @default(false)

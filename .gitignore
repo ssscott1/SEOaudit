@@ -40,7 +40,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-/src/generated/prisma
+# Prisma generated binaries (platform-specific, regenerated at build time)
+/src/generated/prisma/*.node
+/src/generated/prisma/*.wasm
+/src/generated/prisma/query_engine_bg.js
 
 # SQLite database files
 *.db
