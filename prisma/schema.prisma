@@ -1,0 +1,29 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Analysis {
+  id               String    @id @default(cuid())
+  url              String
+  email            String?
+  name             String?
+  score            Int
+  freeIssues       String    // JSON stored as string
+  fullReport       String?   // JSON stored as string (null until paid)
+  reportType       String?   // "one-time" | "subscription"
+  stripeSessionId  String?
+  stripeCustomerId String?
+  paid             Boolean   @default(false)
+  paidAt           DateTime?
+  pdfSent          Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
