@@ -4,216 +4,166 @@ import { useState } from 'react'
 
 interface PaywallProps {
   analysisId: string
+  url: string
+  score: number
+  totalIssues: number
 }
 
-export default function Paywall({ analysisId }: PaywallProps) {
+export default function Paywall({ analysisId, totalIssues }: PaywallProps) {
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [loading, setLoading] = useState<'one-time' | 'subscription' | null>(null)
   const [error, setError] = useState('')
 
   const handleCheckout = async (type: 'one-time' | 'subscription') => {
-    if (!email) {
+    if (!email.trim()) {
       setError('Please enter your email address')
       return
     }
 
-    if (!email.includes('@')) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
       setError('Please enter a valid email address')
       return
     }
 
-    setLoading(type)
     setError('')
+    setLoading(type)
 
     try {
-      const response = await fetch('/api/checkout', {
+      const res = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ analysisId, email, name, type }),
       })
 
-      const data = await response.json()
+      const data = await res.json()
 
-      if (!response.ok) {
-        setError(data.error || 'Failed to create checkout. Please try again.')
+      if (!res.ok) {
+        setError(data.error || 'Failed to create checkout session')
         setLoading(null)
         return
       }
 
-      // Redirect to Stripe Checkout
       if (data.url) {
         window.location.href = data.url
       }
     } catch {
-      setError('Network error. Please try again.')
+      setError('Something went wrong. Please try again.')
       setLoading(null)
     }
   }
 
+  const hiddenIssues = Math.max(0, totalIssues - 3)
+
   return (
-    <div className="space-y-6">
-      <div className="text-center">
-        <h2 className="text-3xl font-bold text-white mb-2">Unlock Your Full Report</h2>
-        <p className="text-gray-400 text-lg">
-          Get every issue, fix, and a 90-day action plan to dominate search results
+    <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl border border-teal-900/50 overflow-hidden">
+      {/* Header banner */}
+      <div className="bg-gradient-to-r from-teal-900/50 to-teal-800/30 px-6 py-5 border-b border-teal-800/50">
+        <h2 className="text-slate-50 text-2xl font-bold mb-1">
+          Unlock Your Full SEO Report
+        </h2>
+        <p className="text-teal-300 text-sm">
+          {hiddenIssues > 0
+            ? `${hiddenIssues} more issues found — see every problem + exact fix instructions`
+            : 'Get detailed fix instructions, AI search analysis & 90-day action plan'}
         </p>
       </div>
 
-      {/* Email capture */}
-      <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-6">
-        <h3 className="text-white font-semibold mb-4">Where should we send your PDF report?</h3>
-        <div className="space-y-3">
+      <div className="p-6">
+        {/* What you get */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          {[
+            { icon: '📋', title: `All ${totalIssues} Issues`, desc: 'Full prioritised list with exact fix instructions' },
+            { icon: '🤖', title: 'AI Search Score', desc: 'ChatGPT, Perplexity & Google AI readiness' },
+            { icon: '📅', title: '90-Day Plan', desc: 'Month-by-month action roadmap + competitor gaps' },
+          ].map(f => (
+            <div key={f.title} className="bg-slate-900/50 rounded-xl p-4 border border-slate-700">
+              <div className="text-2xl mb-2">{f.icon}</div>
+              <p className="text-slate-50 font-semibold text-sm">{f.title}</p>
+              <p className="text-slate-400 text-xs mt-1">{f.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Email input */}
+        <div className="space-y-3 mb-6">
           <div>
-            <label className="text-sm text-gray-400 mb-1 block">Your Name</label>
+            <label className="text-slate-400 text-sm mb-1.5 block">Your name (optional)</label>
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={e => setName(e.target.value)}
               placeholder="Jane Smith"
-              className="w-full px-4 py-3 bg-[#0F172A] border border-[#334155] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#0D9488] transition-colors"
+              className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-slate-50 placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-colors"
             />
           </div>
           <div>
-            <label className="text-sm text-gray-400 mb-1 block">Email Address *</label>
+            <label className="text-slate-400 text-sm mb-1.5 block">
+              Email address <span className="text-red-400">*</span>
+            </label>
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="jane@yourbusiness.com"
-              required
-              className="w-full px-4 py-3 bg-[#0F172A] border border-[#334155] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#0D9488] transition-colors"
+              onChange={e => {
+                setEmail(e.target.value)
+                setError('')
+              }}
+              placeholder="you@example.com"
+              className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 text-slate-50 placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-colors"
             />
           </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
         </div>
-      </div>
 
-      {error && (
-        <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Pricing Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* One-time */}
-        <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-6 hover:border-[#0D9488] transition-all">
-          <div className="text-center mb-6">
-            <p className="text-gray-400 text-sm uppercase tracking-wider mb-2">One-Time Report</p>
-            <div className="flex items-baseline justify-center gap-1">
-              <span className="text-5xl font-bold text-white">$199</span>
-              <span className="text-gray-400">once</span>
-            </div>
-          </div>
-          <ul className="space-y-3 mb-6">
-            {[
-              'Full prioritized issue list',
-              'Exact fix instructions',
-              'AI search optimization audit',
-              'Competitor analysis (3 sites)',
-              '90-day action plan',
-              'PDF report emailed to you',
-            ].map((feature) => (
-              <li key={feature} className="flex items-center gap-2 text-gray-300 text-sm">
-                <svg className="w-4 h-4 text-teal-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                {feature}
-              </li>
-            ))}
-          </ul>
+        {/* CTA buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <button
             onClick={() => handleCheckout('one-time')}
-            disabled={!!loading}
-            className="w-full py-3 bg-white hover:bg-gray-100 disabled:opacity-50 text-[#0F172A] font-bold rounded-lg transition-all duration-200 flex items-center justify-center gap-2"
+            disabled={loading !== null}
+            className="relative flex flex-col items-center justify-center p-5 bg-teal-600 hover:bg-teal-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-xl transition-all hover:shadow-lg hover:shadow-teal-900/40 group"
           >
             {loading === 'one-time' ? (
-              <>
-                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Processing...
-              </>
+              <LoadingSpinner />
             ) : (
-              'Get Full Report — $199'
+              <>
+                <span className="text-white font-bold text-xl">$199</span>
+                <span className="text-teal-100 text-sm font-medium">One-Time Report</span>
+                <span className="text-teal-200/70 text-xs mt-1">Pay once, keep forever</span>
+              </>
             )}
           </button>
-        </div>
 
-        {/* Subscription — Recommended */}
-        <div className="bg-[#1E293B] border-2 border-[#0D9488] rounded-xl p-6 relative">
-          <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-            <span className="bg-[#0D9488] text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-              Best Value
-            </span>
-          </div>
-          <div className="text-center mb-6 mt-2">
-            <p className="text-gray-400 text-sm uppercase tracking-wider mb-2">Monthly Audit</p>
-            <div className="flex items-baseline justify-center gap-1">
-              <span className="text-5xl font-bold text-white">$49</span>
-              <span className="text-gray-400">/month</span>
-            </div>
-            <p className="text-teal-400 text-sm mt-1">Save $150 vs one-time</p>
-          </div>
-          <ul className="space-y-3 mb-6">
-            {[
-              'Everything in Full Report',
-              'New audit every month',
-              'Track ranking progress',
-              'Competitor monitoring',
-              'Updated action plans',
-              'Priority email support',
-            ].map((feature) => (
-              <li key={feature} className="flex items-center gap-2 text-gray-300 text-sm">
-                <svg className="w-4 h-4 text-teal-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                {feature}
-              </li>
-            ))}
-          </ul>
           <button
             onClick={() => handleCheckout('subscription')}
-            disabled={!!loading}
-            className="w-full py-3 bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 text-white font-bold rounded-lg transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-teal-900/30"
+            disabled={loading !== null}
+            className="relative flex flex-col items-center justify-center p-5 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 rounded-xl border border-slate-600 transition-all hover:shadow-lg hover:border-teal-700 group"
           >
             {loading === 'subscription' ? (
-              <>
-                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Processing...
-              </>
+              <LoadingSpinner />
             ) : (
-              'Subscribe — $49/month'
+              <>
+                <span className="text-slate-50 font-bold text-xl">$49<span className="text-slate-400 text-sm font-normal">/mo</span></span>
+                <span className="text-slate-200 text-sm font-medium">Monthly Audit</span>
+                <span className="text-slate-400 text-xs mt-1">Fresh audit every month</span>
+              </>
             )}
           </button>
         </div>
-      </div>
 
-      {/* Trust signals */}
-      <div className="flex flex-wrap items-center justify-center gap-6 text-gray-500 text-sm">
-        <span className="flex items-center gap-2">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-          Secured by Stripe
-        </span>
-        <span className="flex items-center gap-2">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-          </svg>
-          30-day satisfaction guarantee
-        </span>
-        <span className="flex items-center gap-2">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-          PDF delivered instantly
-        </span>
+        <p className="text-slate-500 text-xs text-center mt-4">
+          Secure payment via Stripe · Report emailed as PDF · Cancel anytime (monthly)
+        </p>
       </div>
     </div>
+  )
+}
+
+function LoadingSpinner() {
+  return (
+    <svg className="animate-spin h-6 w-6 text-white" viewBox="0 0 24 24" fill="none">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
   )
 }

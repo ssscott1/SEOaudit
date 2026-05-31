@@ -13,84 +13,58 @@ export default function UrlAnalyzer() {
     e.preventDefault()
     if (!url.trim()) return
 
-    setLoading(true)
     setError('')
+    setLoading(true)
+
+    let normalized = url.trim()
+    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+      normalized = 'https://' + normalized
+    }
 
     try {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || 'Analysis failed. Please try again.')
-        setLoading(false)
-        return
-      }
-
-      // Store analysis data in localStorage for the analyze page
-      localStorage.setItem(`analysis_${data.id}`, JSON.stringify({
-        ...data,
-        url: url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`,
-      }))
-
-      // Navigate to analyze page with the result ID
-      router.push(`/analyze?id=${data.id}`)
+      new URL(normalized)
     } catch {
-      setError('Network error. Please check your connection and try again.')
+      setError('Please enter a valid URL (e.g. example.com or https://example.com)')
       setLoading(false)
+      return
     }
+
+    router.push(`/analyze?url=${encodeURIComponent(normalized)}`)
   }
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">
-        <div className="flex-1 relative">
-          <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-            </svg>
-          </div>
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://yourwebsite.com"
-            className="w-full pl-12 pr-4 py-4 bg-[#1E293B] border border-[#334155] rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-[#0D9488] focus:ring-2 focus:ring-[#0D9488]/20 text-lg transition-all"
-            disabled={loading}
-          />
-        </div>
+    <form onSubmit={handleSubmit} className="w-full max-w-2xl mx-auto">
+      <div className="flex flex-col sm:flex-row gap-3">
+        <input
+          type="text"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          placeholder="Enter your website URL (e.g. example.com)"
+          className="flex-1 px-5 py-4 rounded-xl bg-slate-800 border border-slate-700 text-slate-50 placeholder-slate-500 text-lg focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-colors"
+          disabled={loading}
+          autoFocus
+        />
         <button
           type="submit"
           disabled={loading || !url.trim()}
-          className="px-8 py-4 bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all duration-200 text-lg whitespace-nowrap flex items-center gap-2 shadow-lg shadow-teal-900/30"
+          className="px-8 py-4 bg-teal-600 hover:bg-teal-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-semibold text-lg rounded-xl transition-all hover:shadow-lg hover:shadow-teal-900/20 whitespace-nowrap"
         >
           {loading ? (
-            <>
-              <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+            <span className="flex items-center gap-2">
+              <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              Analyzing...
-            </>
+              Analysing...
+            </span>
           ) : (
-            <>
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              Analyze Now
-            </>
+            'Analyse Now'
           )}
         </button>
-      </form>
+      </div>
       {error && (
-        <div className="mt-3 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm">
-          {error}
-        </div>
+        <p className="mt-3 text-red-400 text-sm text-center">{error}</p>
       )}
-    </div>
+    </form>
   )
 }

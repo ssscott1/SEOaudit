@@ -1,332 +1,200 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { SEOAnalysisResult } from './seo-analyzer'
+import type { SEOResult } from './seo-analyzer'
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-})
+export interface AIAnalysis {
+  aiScore: number
+  aiIssues: AIIssue[]
+  competitors: Competitor[]
+  actionPlan: ActionPlan
+}
 
 export interface AIIssue {
+  id: string
+  severity: 'critical' | 'warning' | 'info'
   title: string
   description: string
   fix: string
-  priority: 'high' | 'medium' | 'low'
 }
 
-export interface ActionItem {
-  task: string
-  effort: 'low' | 'medium' | 'high'
-  impact: 'low' | 'medium' | 'high'
-  description: string
+export interface Competitor {
+  name: string
+  url: string
+  strengths: string[]
+  contentGaps: string[]
 }
 
-export interface AIAnalysisResult {
-  aiScore: number
-  aiIssues: AIIssue[]
-  opportunities: string[]
-  competitors: {
-    suggested: string[]
-    gaps: string[]
-  }
+export interface ActionPlan {
+  month1: string[]
+  month2: string[]
+  month3: string[]
+}
+
+const MOCK_AI_ANALYSIS: AIAnalysis = {
+  aiScore: 42,
+  aiIssues: [
+    {
+      id: 'ai-faq-missing',
+      severity: 'critical',
+      title: 'No FAQ content for AI search snippet opportunities',
+      description: 'AI search engines (ChatGPT, Perplexity, Google AI Overviews) prefer pages with explicit Q&A content they can cite as direct answers.',
+      fix: 'Add a FAQ section with 5–10 common questions and clear, concise answers (2–4 sentences each). Mark them up with FAQ schema.',
+    },
+    {
+      id: 'ai-entity-clarity',
+      severity: 'warning',
+      title: 'Business entity not clearly defined',
+      description: 'AI models struggle to identify and cite your business when entity information (who you are, what you do, where you operate) is not explicit.',
+      fix: 'Add an About section with clear entity signals: business name, location, services offered, founding year, and credentials.',
+    },
+    {
+      id: 'ai-structured-answers',
+      severity: 'warning',
+      title: 'Content lacks structured answer format',
+      description: 'AI search engines extract "best answer" snippets from pages with clear, well-structured responses. Walls of text are rarely cited.',
+      fix: 'Restructure key content using headers, bullet lists, and numbered steps. Front-load answers before supporting detail.',
+    },
+  ],
+  competitors: [
+    {
+      name: 'Competitor A',
+      url: 'https://example-competitor-1.com',
+      strengths: ['Comprehensive FAQ sections', 'Strong structured data', 'Regular content updates'],
+      contentGaps: ['No video content', 'Limited case studies', 'Weak social proof'],
+    },
+    {
+      name: 'Competitor B',
+      url: 'https://example-competitor-2.com',
+      strengths: ['High domain authority', 'Multiple topic clusters', 'Strong backlink profile'],
+      contentGaps: ['Slow page load times', 'No schema markup', 'Poor mobile experience'],
+    },
+    {
+      name: 'Competitor C',
+      url: 'https://example-competitor-3.com',
+      strengths: ['Active blog with AI-ready content', 'Clear entity pages', 'Good internal linking'],
+      contentGaps: ['Limited local SEO', 'No podcast/audio content', 'Weak email capture'],
+    },
+  ],
   actionPlan: {
-    month1: ActionItem[]
-    month2: ActionItem[]
-    month3: ActionItem[]
-  }
-  summary: {
-    grade: string
-    topWins: string[]
-    criticalIssues: string[]
-  }
+    month1: [
+      'Fix all critical technical SEO issues (HTTPS, canonical, viewport)',
+      'Add/optimise title tags and meta descriptions for top 5 pages',
+      'Add one H1 to every page that is missing it',
+      'Add alt text to all images',
+      'Install Google Search Console and submit sitemap',
+    ],
+    month2: [
+      'Add FAQ section with schema markup to homepage and top service pages',
+      'Create Organisation and WebSite JSON-LD schema',
+      'Expand thin content pages to 800+ words',
+      'Add Open Graph and Twitter Card tags to all pages',
+      'Build 5 high-quality internal links between related pages',
+    ],
+    month3: [
+      'Create 4 blog posts targeting long-tail keywords from competitor gap analysis',
+      'Implement a content cluster strategy around your primary topic',
+      'Optimise Core Web Vitals (LCP, FID, CLS)',
+      'Launch a link-building outreach campaign',
+      'Set up monthly performance reporting in Google Analytics 4',
+    ],
+  },
 }
 
-const SYSTEM_PROMPT = `You are an expert SEO and AI search optimization consultant with 15 years of experience helping businesses rank on Google and appear in AI search engines like ChatGPT, Perplexity, Claude, and Gemini.
+export async function analyzeWithAI(url: string, seoResult: SEOResult, pageContent: string): Promise<AIAnalysis> {
+  if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'your_key_here') {
+    console.warn('ANTHROPIC_API_KEY not set — returning mock AI analysis')
+    return MOCK_AI_ANALYSIS
+  }
 
-Your task is to analyze a website's SEO data and provide actionable, specific recommendations. You focus on:
-1. Traditional SEO improvements (technical, content, authority)
-2. AI search optimization (how to appear in AI-generated answers)
-3. Competitive positioning
-4. Prioritized action plans
+  const client = new Anthropic()
 
-Always respond with valid JSON only. No markdown, no explanation outside JSON.`
+  const systemPrompt = `You are an expert SEO and AI search optimisation analyst. Your job is to analyse websites and provide actionable recommendations for both traditional search engines (Google) and AI-powered search (ChatGPT, Perplexity, Google AI Overviews, Claude).
 
-export async function analyzeWithAI(
-  url: string,
-  seoResult: SEOAnalysisResult,
-  htmlSnippet: string
-): Promise<AIAnalysisResult> {
-  // Prepare a content snippet (first 3000 chars of body text)
-  const bodyPreview = htmlSnippet.slice(0, 3000)
-
-  const userPrompt = `Analyze this website for SEO and AI search optimization:
-
-URL: ${url}
-SEO Score: ${seoResult.score}/100
-Title: ${seoResult.metadata.title || 'Missing'}
-Description: ${seoResult.metadata.description || 'Missing'}
-Word Count: ${seoResult.metadata.wordCount}
-H1 Count: ${seoResult.metadata.h1Count}
-H2 Count: ${seoResult.metadata.h2Count}
-Has Schema: ${seoResult.metadata.hasSchema}
-Images Without Alt: ${seoResult.metadata.missingAltCount}
-Internal Links: ${seoResult.metadata.internalLinks}
-External Links: ${seoResult.metadata.externalLinks}
-HTTPS: ${seoResult.metadata.isHttps}
-Has Canonical: ${seoResult.metadata.hasCanonical}
-Has Viewport: ${seoResult.metadata.hasViewport}
-OG Title: ${seoResult.metadata.ogTitle || 'Missing'}
-
-Top SEO Issues Found:
-${seoResult.allIssues.slice(0, 5).map(i => `- [${i.severity}] ${i.title}: ${i.description}`).join('\n')}
-
-Page Content Preview:
-${bodyPreview}
-
-Please provide a comprehensive analysis in this exact JSON format:
+You must respond ONLY with valid JSON matching this exact structure:
 {
-  "aiScore": <number 0-100 representing AI search optimization score>,
+  "aiScore": <number 0-100>,
   "aiIssues": [
     {
-      "title": "<issue title>",
-      "description": "<what the problem is and why it matters for AI search>",
-      "fix": "<specific actionable fix>",
-      "priority": "<high|medium|low>"
+      "id": "<unique-slug>",
+      "severity": "<critical|warning|info>",
+      "title": "<concise title>",
+      "description": "<2-3 sentences explaining the problem>",
+      "fix": "<specific actionable fix>"
     }
   ],
-  "opportunities": [
-    "<specific opportunity string 1>",
-    "<specific opportunity string 2>",
-    "<specific opportunity string 3>",
-    "<specific opportunity string 4>",
-    "<specific opportunity string 5>"
+  "competitors": [
+    {
+      "name": "<competitor name>",
+      "url": "<competitor URL>",
+      "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
+      "contentGaps": ["<gap 1>", "<gap 2>", "<gap 3>"]
+    }
   ],
-  "competitors": {
-    "suggested": [
-      "<competitor domain 1>",
-      "<competitor domain 2>",
-      "<competitor domain 3>"
-    ],
-    "gaps": [
-      "<content gap or opportunity vs competitors>",
-      "<content gap or opportunity vs competitors>",
-      "<content gap or opportunity vs competitors>"
-    ]
-  },
   "actionPlan": {
-    "month1": [
-      {
-        "task": "<specific task title>",
-        "effort": "<low|medium|high>",
-        "impact": "<low|medium|high>",
-        "description": "<detailed description of what to do>"
-      }
-    ],
-    "month2": [
-      {
-        "task": "<specific task title>",
-        "effort": "<low|medium|high>",
-        "impact": "<low|medium|high>",
-        "description": "<detailed description>"
-      }
-    ],
-    "month3": [
-      {
-        "task": "<specific task title>",
-        "effort": "<low|medium|high>",
-        "impact": "<low|medium|high>",
-        "description": "<detailed description>"
-      }
-    ]
-  },
-  "summary": {
-    "grade": "<letter grade A-F>",
-    "topWins": [
-      "<quick win that's already done well>",
-      "<quick win that's already done well>"
-    ],
-    "criticalIssues": [
-      "<most critical issue to fix>",
-      "<most critical issue to fix>",
-      "<most critical issue to fix>"
-    ]
+    "month1": ["<action 1>", "<action 2>", "<action 3>", "<action 4>", "<action 5>"],
+    "month2": ["<action 1>", "<action 2>", "<action 3>", "<action 4>", "<action 5>"],
+    "month3": ["<action 1>", "<action 2>", "<action 3>", "<action 4>", "<action 5>"]
   }
 }
 
-Focus on AI search optimization specifically:
-- How well structured is the content for AI to extract answers?
-- Does the site have clear entity definitions (what is this business, what do they do)?
-- Are there FAQ sections that AI can use for featured snippets?
-- Is the content authoritative with citations and expertise signals?
-- How can they appear in ChatGPT, Perplexity, Claude, and Gemini answers?
+Rules:
+- aiScore: Rate how well the site is optimised for AI search engines (0 = terrible, 100 = excellent)
+- aiIssues: 3-6 specific issues with AI search visibility (FAQ gaps, entity clarity, structured answers, citation worthiness, E-E-A-T signals)
+- competitors: 3 realistic competitor sites in the same niche (base on the URL/content provided)
+- actionPlan: Prioritised 90-day plan, month1 = quick wins, month2 = structural improvements, month3 = growth initiatives
+- Be specific to the actual site/niche — do not give generic advice`
 
-Provide 5-7 AI issues, 3 action items per month, and make everything specific to this site's niche.`
+  const userMessage = `Analyse this website for AI search optimisation:
+
+URL: ${url}
+
+SEO Score: ${seoResult.score}/100
+
+Current SEO Issues Found:
+${seoResult.allIssues.map(i => `- [${i.severity.toUpperCase()}] ${i.title}`).join('\n')}
+
+Page Metadata:
+- Title: ${seoResult.metadata.title || 'MISSING'}
+- Description: ${seoResult.metadata.description || 'MISSING'}
+- Word Count: ${seoResult.metadata.wordCount}
+- Images: ${seoResult.metadata.imageCount}
+- Has Schema: ${seoResult.metadata.hasSchema}
+- H1 Count: ${seoResult.metadata.h1Count}
+
+Page Content Sample (first 2000 chars):
+${pageContent.substring(0, 2000)}
+
+Provide your analysis as JSON only.`
 
   try {
-    const message = await anthropic.messages.create({
+    const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
+      max_tokens: 2048,
       system: [
         {
           type: 'text',
-          text: SYSTEM_PROMPT,
+          text: systemPrompt,
           cache_control: { type: 'ephemeral' },
         },
       ],
       messages: [
         {
           role: 'user',
-          content: userPrompt,
+          content: userMessage,
         },
       ],
     })
 
     const content = message.content[0]
-    if (content.type !== 'text') {
-      throw new Error('Unexpected response type from Claude')
-    }
+    if (content.type !== 'text') throw new Error('Unexpected response type')
 
-    // Extract JSON from the response (handle potential markdown code blocks)
-    let jsonText = content.text.trim()
-    if (jsonText.startsWith('```')) {
-      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-    }
+    // Extract JSON from response (may have markdown code blocks)
+    const jsonMatch = content.text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) throw new Error('No JSON found in response')
 
-    const result = JSON.parse(jsonText) as AIAnalysisResult
-    return result
-  } catch (error) {
-    console.error('AI analysis error:', error)
-    // Return a fallback result
-    return generateFallbackAnalysis(url, seoResult)
-  }
-}
-
-function generateFallbackAnalysis(url: string, seoResult: SEOAnalysisResult): AIAnalysisResult {
-  const hostname = (() => { try { return new URL(url).hostname } catch { return url } })()
-
-  return {
-    aiScore: Math.max(20, seoResult.score - 15),
-    aiIssues: [
-      {
-        title: 'Missing FAQ Schema Markup',
-        description: 'AI search engines like ChatGPT and Perplexity prioritize content with FAQ schemas when generating answers.',
-        fix: 'Add FAQ schema markup to your top pages answering common customer questions.',
-        priority: 'high',
-      },
-      {
-        title: 'Weak Entity Definition',
-        description: 'AI search engines need clear entity definitions to understand what your business does and who it serves.',
-        fix: 'Add a clear "About" section with structured data defining your business, services, and location.',
-        priority: 'high',
-      },
-      {
-        title: 'No Authoritative Citations',
-        description: 'AI models favor content with citations and expert sources when generating recommendations.',
-        fix: 'Add citations, link to authoritative sources, and include expert quotes or statistics in your content.',
-        priority: 'medium',
-      },
-      {
-        title: 'Missing Conversational Content',
-        description: 'AI search engines answer conversational queries. Your content needs to directly answer questions people ask.',
-        fix: 'Create content that directly answers "who, what, when, where, why, how" questions about your business and industry.',
-        priority: 'medium',
-      },
-      {
-        title: 'No Review/Social Proof Schema',
-        description: 'AI engines use review signals to determine authority. Reviews with schema markup are more likely to be cited.',
-        fix: 'Add Review and AggregateRating schema markup showcasing customer reviews.',
-        priority: 'low',
-      },
-    ],
-    opportunities: [
-      'Create a comprehensive FAQ page targeting question-based searches',
-      'Build "Best of" and comparison content to capture AI recommendation queries',
-      'Develop a resource hub to establish topical authority in your niche',
-      'Optimize for voice search with natural language, question-answer format',
-      'Create detailed service/product descriptions that AI can use as references',
-    ],
-    competitors: {
-      suggested: [
-        `competitor1-${hostname.split('.')[0]}.com`,
-        `best-${hostname.split('.')[0]}-alternative.com`,
-        `${hostname.split('.')[0]}-reviews.com`,
-      ],
-      gaps: [
-        'Comparison content (your service vs alternatives)',
-        'In-depth how-to guides and tutorials',
-        'Industry statistics and original research',
-      ],
-    },
-    actionPlan: {
-      month1: [
-        {
-          task: 'Fix Critical Technical SEO Issues',
-          effort: 'low',
-          impact: 'high',
-          description: 'Address all critical SEO issues identified in the audit, including meta tags, canonical URLs, and schema markup.',
-        },
-        {
-          task: 'Create FAQ Content and Schema',
-          effort: 'medium',
-          impact: 'high',
-          description: 'Research top 20 questions your customers ask and create an FAQ page with proper schema markup.',
-        },
-        {
-          task: 'Optimize Meta Titles and Descriptions',
-          effort: 'low',
-          impact: 'high',
-          description: 'Rewrite all page titles and descriptions to optimal length with primary keywords.',
-        },
-      ],
-      month2: [
-        {
-          task: 'Build Topical Authority Content',
-          effort: 'high',
-          impact: 'high',
-          description: 'Create 4-6 comprehensive blog posts covering core topics in your niche, each 1000+ words.',
-        },
-        {
-          task: 'Implement Full Schema Markup',
-          effort: 'medium',
-          impact: 'medium',
-          description: 'Add Organization, LocalBusiness, Product, or Service schema across all key pages.',
-        },
-        {
-          task: 'Competitor Content Gap Analysis',
-          effort: 'medium',
-          impact: 'high',
-          description: 'Identify what content competitors rank for that you don\'t and create superior versions.',
-        },
-      ],
-      month3: [
-        {
-          task: 'Build High-Quality Backlinks',
-          effort: 'high',
-          impact: 'high',
-          description: 'Launch outreach campaign for guest posts, directory listings, and partnership links.',
-        },
-        {
-          task: 'Optimize for Voice and AI Search',
-          effort: 'medium',
-          impact: 'medium',
-          description: 'Reformat existing content to directly answer conversational queries AI assistants receive.',
-        },
-        {
-          task: 'Review and Refine Strategy',
-          effort: 'low',
-          impact: 'medium',
-          description: 'Analyze traffic changes, track keyword rankings, and adjust content strategy based on data.',
-        },
-      ],
-    },
-    summary: {
-      grade: seoResult.score >= 80 ? 'B' : seoResult.score >= 60 ? 'C' : seoResult.score >= 40 ? 'D' : 'F',
-      topWins: [
-        seoResult.metadata.isHttps ? 'Site uses HTTPS (security baseline met)' : '',
-        seoResult.metadata.hasCanonical ? 'Canonical tags properly configured' : '',
-      ].filter(Boolean).slice(0, 2),
-      criticalIssues: seoResult.allIssues
-        .filter(i => i.severity === 'critical')
-        .slice(0, 3)
-        .map(i => i.title),
-    },
+    const parsed = JSON.parse(jsonMatch[0]) as AIAnalysis
+    return parsed
+  } catch (err) {
+    console.error('AI analysis failed:', err)
+    return MOCK_AI_ANALYSIS
   }
 }

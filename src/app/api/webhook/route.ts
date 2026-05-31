@@ -1,41 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
+import { analyses } from '@/lib/db/schema'
 import { stripe } from '@/lib/stripe'
-import prisma from '@/lib/db'
 import { analyzeSEO } from '@/lib/seo-analyzer'
 import { analyzeWithAI } from '@/lib/ai-analyzer'
-import { generatePDFBuffer } from '@/lib/pdf-generator'
+import { generatePDF } from '@/lib/pdf-generator'
 import { sendReportEmail } from '@/lib/email'
-import Stripe from 'stripe'
+import { eq } from 'drizzle-orm'
+import type Stripe from 'stripe'
 
 export async function POST(request: NextRequest) {
   const body = await request.text()
-  const signature = request.headers.get('stripe-signature')
+  const sig = request.headers.get('stripe-signature')
 
-  if (!signature) {
+  if (!sig) {
     return NextResponse.json({ error: 'No signature' }, { status: 400 })
   }
 
   let event: Stripe.Event
-
   try {
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
-
-    if (webhookSecret && webhookSecret !== 'whsec_...') {
-      event = stripe.webhooks.constructEvent(body, signature, webhookSecret)
-    } else {
-      // Development: parse without verification
-      event = JSON.parse(body) as Stripe.Event
-    }
+    event = stripe.webhooks.constructEvent(
+      body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET || ''
+    )
   } catch (err) {
-    console.error('Webhook signature verification failed:', err)
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 400 })
+    const message = err instanceof Error ? err.message : 'Webhook error'
+    console.error('Webhook signature error:', message)
+    return NextResponse.json({ error: `Webhook Error: ${message}` }, { status: 400 })
   }
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session
-
     const analysisId = session.metadata?.analysisId
-    const reportType = session.metadata?.reportType as 'one-time' | 'subscription' | undefined
+    const reportType = session.metadata?.reportType as 'one-time' | 'subscription'
 
     if (!analysisId) {
       console.error('No analysisId in session metadata')
@@ -43,21 +41,9 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // Mark as paid
-      await prisma.analysis.update({
-        where: { id: analysisId },
-        data: {
-          paid: true,
-          paidAt: new Date(),
-          stripeCustomerId: session.customer as string || null,
-          reportType: reportType || 'one-time',
-        },
-      })
-
-      // Get analysis record
-      const analysis = await prisma.analysis.findUnique({
-        where: { id: analysisId },
-      })
+      // Find the analysis
+      const results = await db.select().from(analyses).where(eq(analyses.id, analysisId))
+      const analysis = results[0]
 
       if (!analysis) {
         console.error('Analysis not found:', analysisId)
@@ -65,73 +51,90 @@ export async function POST(request: NextRequest) {
       }
 
       // Run full SEO analysis
-      const seoResult = await analyzeSEO(analysis.url)
-
-      // Run AI analysis
-      const aiResult = await analyzeWithAI(analysis.url, seoResult, seoResult.html)
-
-      // Build full report
-      const fullReport = {
-        summary: aiResult.summary,
-        seoIssues: seoResult.allIssues,
-        categories: seoResult.categories,
-        metadata: seoResult.metadata,
-        aiSearchAnalysis: {
-          aiScore: aiResult.aiScore,
-          aiIssues: aiResult.aiIssues,
-          opportunities: aiResult.opportunities,
-        },
-        competitors: aiResult.competitors,
-        actionPlan: aiResult.actionPlan,
+      let seoResult
+      try {
+        seoResult = await analyzeSEO(analysis.url)
+      } catch (err) {
+        console.error('SEO re-analysis failed:', err)
+        // Use existing data if available
+        seoResult = null
       }
 
-      // Save full report
-      await prisma.analysis.update({
-        where: { id: analysisId },
-        data: {
-          fullReport: JSON.stringify(fullReport),
-        },
-      })
+      // Run AI analysis
+      let aiAnalysis = null
+      if (seoResult) {
+        try {
+          aiAnalysis = await analyzeWithAI(analysis.url, seoResult, '')
+        } catch (err) {
+          console.error('AI analysis failed:', err)
+        }
+      }
 
-      // Generate PDF and send email if email is present
+      // Prepare full report data
+      const fullReport = {
+        allIssues: seoResult?.allIssues || [],
+        categories: seoResult?.categories || { technical: 0, content: 0, social: 0, performance: 0 },
+        metadata: seoResult?.metadata || {
+          title: '', description: '', wordCount: 0, imageCount: 0,
+          url: analysis.url, h1Count: 0, h2Count: 0,
+          internalLinks: 0, externalLinks: 0,
+          hasSchema: false, hasCanonical: false, isHttps: true,
+        },
+        aiAnalysis,
+      }
+
+      // Update analysis record
+      await db
+        .update(analyses)
+        .set({
+          paid: true,
+          paidAt: new Date(),
+          fullReport: JSON.stringify(fullReport),
+          reportType,
+          stripeSessionId: session.id,
+          stripeCustomerId: session.customer as string || null,
+          score: seoResult?.score ?? analysis.score,
+          updatedAt: new Date(),
+        })
+        .where(eq(analyses.id, analysisId))
+
+      // Re-fetch updated analysis for PDF
+      const updatedResults = await db.select().from(analyses).where(eq(analyses.id, analysisId))
+      const updatedAnalysis = updatedResults[0]
+
+      // Generate PDF
+      let pdfBuffer: Buffer | undefined
+      try {
+        pdfBuffer = await generatePDF(updatedAnalysis)
+      } catch (err) {
+        console.error('PDF generation failed:', err)
+      }
+
+      // Send email
       if (analysis.email) {
         try {
-          const pdfBuffer = await generatePDFBuffer(
-            analysis.url,
-            analysisId,
-            seoResult,
-            aiResult
-          )
-
           await sendReportEmail({
             to: analysis.email,
-            name: analysis.name || 'there',
+            name: analysis.name || '',
             url: analysis.url,
+            score: updatedAnalysis.score,
             reportId: analysisId,
             pdfBuffer,
           })
 
-          await prisma.analysis.update({
-            where: { id: analysisId },
-            data: { pdfSent: true },
-          })
-        } catch (emailError) {
-          console.error('Email/PDF error:', emailError)
-          // Don't fail the webhook for email errors
+          // Mark PDF as sent
+          await db
+            .update(analyses)
+            .set({ pdfSent: true, updatedAt: new Date() })
+            .where(eq(analyses.id, analysisId))
+        } catch (err) {
+          console.error('Email send failed:', err)
         }
       }
-    } catch (error) {
-      console.error('Webhook processing error:', error)
-      // Return 200 to prevent Stripe retries for processing errors
+    } catch (err) {
+      console.error('Webhook processing error:', err)
     }
   }
 
   return NextResponse.json({ received: true })
-}
-
-// Disable body parsing for webhooks
-export const config = {
-  api: {
-    bodyParser: false,
-  },
 }

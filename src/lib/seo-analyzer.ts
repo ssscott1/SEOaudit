@@ -3,631 +3,445 @@ import * as cheerio from 'cheerio'
 export interface Issue {
   id: string
   severity: 'critical' | 'warning' | 'info'
-  category: 'technical' | 'content' | 'performance' | 'social'
+  category: string
   title: string
   description: string
   fix: string
-  impact: number // 1-10
 }
 
-export interface CategoryScore {
-  score: number
-  maxScore: number
-  label: string
-}
-
-export interface SEOAnalysisResult {
+export interface SEOResult {
   score: number
   allIssues: Issue[]
   categories: {
-    technical: CategoryScore
-    content: CategoryScore
-    performance: CategoryScore
-    social: CategoryScore
+    technical: number
+    content: number
+    social: number
+    performance: number
   }
   metadata: {
     title: string
     description: string
     wordCount: number
     imageCount: number
-    linkCount: number
-    internalLinks: number
-    externalLinks: number
+    url: string
     h1Count: number
     h2Count: number
+    internalLinks: number
+    externalLinks: number
     hasSchema: boolean
     hasCanonical: boolean
-    hasViewport: boolean
-    hasRobots: boolean
     isHttps: boolean
-    pageSize: number
-    missingAltCount: number
-    ogTitle: string
-    ogDescription: string
-    ogImage: string
   }
-  html: string
 }
 
-function estimateReadingLevel(text: string): string {
-  const words = text.split(/\s+/).filter(Boolean)
-  const sentences = text.split(/[.!?]+/).filter(Boolean)
-  const syllables = words.reduce((acc, word) => {
-    return acc + countSyllables(word)
-  }, 0)
+export async function analyzeSEO(url: string): Promise<SEOResult> {
+  const issues: Issue[] = []
 
-  if (words.length === 0 || sentences.length === 0) return 'Unknown'
+  // Validate & normalize URL
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(url)
+  } catch {
+    throw new Error('Invalid URL')
+  }
 
-  const avgWordsPerSentence = words.length / sentences.length
-  const avgSyllablesPerWord = syllables / words.length
-  const fleschKincaid = 0.39 * avgWordsPerSentence + 11.8 * avgSyllablesPerWord - 15.59
-
-  if (fleschKincaid < 6) return 'Elementary'
-  if (fleschKincaid < 9) return 'Middle School'
-  if (fleschKincaid < 13) return 'High School'
-  return 'College'
-}
-
-function countSyllables(word: string): number {
-  word = word.toLowerCase().replace(/[^a-z]/g, '')
-  if (word.length <= 3) return 1
-  const vowels = word.match(/[aeiouy]+/g) || []
-  return Math.max(1, vowels.length)
-}
-
-export async function analyzeSEO(url: string): Promise<SEOAnalysisResult> {
-  const isHttps = url.startsWith('https://')
+  // Fetch page HTML
   let html = ''
-  let fetchError = false
-
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15000)
-
     const response = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (compatible; SEOAuditBot/1.0; +https://seoauditpro.com)',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
       signal: controller.signal,
-      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; SEOAuditBot/1.0)',
+      },
     })
     clearTimeout(timeout)
-
     html = await response.text()
   } catch {
-    fetchError = true
-    html = ''
+    throw new Error('Failed to fetch URL. Please check the URL is accessible.')
   }
 
   const $ = cheerio.load(html)
 
-  // Meta analysis
-  const title = $('title').first().text().trim()
-  const description = $('meta[name="description"]').attr('content') || ''
-  const keywords = $('meta[name="keywords"]').attr('content') || ''
-  const canonical = $('link[rel="canonical"]').attr('href') || ''
-  const robotsMeta = $('meta[name="robots"]').attr('content') || ''
-  const viewportMeta = $('meta[name="viewport"]').attr('content') || ''
-  const charset = $('meta[charset]').attr('charset') || $('meta[http-equiv="Content-Type"]').attr('content') || ''
-
-  // OG tags
-  const ogTitle = $('meta[property="og:title"]').attr('content') || ''
-  const ogDescription = $('meta[property="og:description"]').attr('content') || ''
-  const ogImage = $('meta[property="og:image"]').attr('content') || ''
-
-  // Headings
-  const h1Tags = $('h1')
-  const h2Tags = $('h2')
-  const h3Tags = $('h3')
-
-  // Images
-  const images = $('img')
-  const imagesWithoutAlt = $('img:not([alt]), img[alt=""]')
-  const missingAltCount = imagesWithoutAlt.length
-
-  // Links
-  let internalLinks = 0
-  let externalLinks = 0
-  const hostname = (() => {
-    try { return new URL(url).hostname } catch { return '' }
-  })()
-
-  $('a[href]').each((_, el) => {
-    const href = $(el).attr('href') || ''
-    if (href.startsWith('http') || href.startsWith('//')) {
-      try {
-        const linkHost = new URL(href.startsWith('//') ? `https:${href}` : href).hostname
-        if (linkHost === hostname) internalLinks++
-        else externalLinks++
-      } catch {
-        externalLinks++
-      }
-    } else if (href.startsWith('/') || href.startsWith('#') || href.startsWith('.')) {
-      internalLinks++
-    }
-  })
-
-  // Schema
-  const hasSchema = $('script[type="application/ld+json"]').length > 0
-
-  // Content
-  const bodyText = $('body').text().replace(/\s+/g, ' ').trim()
-  const wordCount = bodyText.split(/\s+/).filter(Boolean).length
-
-  // Page size estimate
-  const pageSize = Buffer.byteLength(html, 'utf8')
-
-  const issues: Issue[] = []
-  let technicalScore = 0
-  const technicalMax = 35
-  let contentScore = 0
-  const contentMax = 35
-  let performanceScore = 0
-  const performanceMax = 20
-  let socialScore = 0
-  const socialMax = 10
-
-  // ===== TECHNICAL CHECKS =====
-
-  // HTTPS
+  // --- HTTPS ---
+  const isHttps = parsedUrl.protocol === 'https:'
   if (!isHttps) {
     issues.push({
-      id: 'no-https',
+      id: 'https-missing',
       severity: 'critical',
       category: 'technical',
-      title: 'Site Not Using HTTPS',
-      description: 'Your site is not using HTTPS. This is a major security and ranking issue.',
+      title: 'Site is not using HTTPS',
+      description: 'Your site is served over HTTP, not HTTPS. Search engines penalise non-HTTPS sites and browsers show security warnings.',
       fix: 'Install an SSL certificate and redirect all HTTP traffic to HTTPS. Most hosting providers offer free SSL via Let\'s Encrypt.',
-      impact: 10,
-    })
-  } else {
-    technicalScore += 5
-  }
-
-  // Fetch error
-  if (fetchError) {
-    issues.push({
-      id: 'fetch-error',
-      severity: 'critical',
-      category: 'technical',
-      title: 'Unable to Crawl Page',
-      description: 'The page could not be crawled. This may indicate the site blocks crawlers, has a timeout, or is down.',
-      fix: 'Ensure the site is accessible and does not block legitimate crawlers via robots.txt or firewall rules.',
-      impact: 10,
     })
   }
 
-  // Canonical
-  if (!canonical) {
-    issues.push({
-      id: 'no-canonical',
-      severity: 'warning',
-      category: 'technical',
-      title: 'Missing Canonical Tag',
-      description: 'No canonical tag found. This can lead to duplicate content issues.',
-      fix: 'Add <link rel="canonical" href="YOUR_URL"> to the <head> section to indicate the preferred URL.',
-      impact: 6,
-    })
-  } else {
-    technicalScore += 5
-  }
-
-  // Viewport
-  if (!viewportMeta) {
-    issues.push({
-      id: 'no-viewport',
-      severity: 'critical',
-      category: 'technical',
-      title: 'Missing Viewport Meta Tag',
-      description: 'No viewport meta tag found. This means the page may not render properly on mobile devices.',
-      fix: 'Add <meta name="viewport" content="width=device-width, initial-scale=1"> to the <head> section.',
-      impact: 8,
-    })
-  } else {
-    technicalScore += 5
-  }
-
-  // Robots meta
-  if (robotsMeta.includes('noindex')) {
-    issues.push({
-      id: 'noindex',
-      severity: 'critical',
-      category: 'technical',
-      title: 'Page Set to noindex',
-      description: 'The robots meta tag includes "noindex", which prevents search engines from indexing this page.',
-      fix: 'Remove "noindex" from the robots meta tag if you want this page to appear in search results.',
-      impact: 10,
-    })
-  } else {
-    technicalScore += 5
-  }
-
-  // Schema
-  if (!hasSchema) {
-    issues.push({
-      id: 'no-schema',
-      severity: 'warning',
-      category: 'technical',
-      title: 'Missing Structured Data (Schema.org)',
-      description: 'No JSON-LD structured data found. Structured data helps search engines understand your content.',
-      fix: 'Add JSON-LD structured data appropriate for your content type (Organization, Article, Product, etc.).',
-      impact: 7,
-    })
-  } else {
-    technicalScore += 5
-  }
-
-  // Charset
-  if (!charset) {
-    issues.push({
-      id: 'no-charset',
-      severity: 'warning',
-      category: 'technical',
-      title: 'Missing Charset Declaration',
-      description: 'No charset meta tag found. This can cause character encoding issues.',
-      fix: 'Add <meta charset="UTF-8"> as the first element in the <head> section.',
-      impact: 4,
-    })
-  } else {
-    technicalScore += 5
-  }
-
-  // Page size
-  if (pageSize > 500000) {
-    issues.push({
-      id: 'large-page',
-      severity: 'warning',
-      category: 'technical',
-      title: 'Large Page Size',
-      description: `Page size is ${Math.round(pageSize / 1024)}KB which may slow down loading.`,
-      fix: 'Minify HTML, CSS, and JavaScript. Remove unnecessary whitespace and comments.',
-      impact: 6,
-    })
-  } else if (pageSize > 0) {
-    technicalScore += 5
-  }
-
-  // H1 count
-  if (h1Tags.length === 0) {
-    issues.push({
-      id: 'no-h1',
-      severity: 'critical',
-      category: 'content',
-      title: 'Missing H1 Tag',
-      description: 'No H1 heading found on the page. The H1 is crucial for SEO.',
-      fix: 'Add a single H1 tag that includes your primary keyword and accurately describes the page content.',
-      impact: 9,
-    })
-  } else if (h1Tags.length > 1) {
-    issues.push({
-      id: 'multiple-h1',
-      severity: 'warning',
-      category: 'content',
-      title: 'Multiple H1 Tags',
-      description: `Found ${h1Tags.length} H1 tags. Pages should have exactly one H1.`,
-      fix: 'Keep only one H1 tag and use H2, H3 for subheadings.',
-      impact: 6,
-    })
-    contentScore += 3
-  } else {
-    contentScore += 8
-  }
-
-  // Title checks
+  // --- Title ---
+  const title = $('title').first().text().trim()
+  const titleLen = title.length
   if (!title) {
     issues.push({
-      id: 'no-title',
+      id: 'title-missing',
       severity: 'critical',
       category: 'content',
-      title: 'Missing Page Title',
-      description: 'The page has no title tag. This is one of the most important SEO elements.',
-      fix: 'Add a descriptive title tag between 50-60 characters that includes your primary keyword.',
-      impact: 10,
+      title: 'Missing page title',
+      description: 'No <title> tag was found. The title is one of the most important on-page SEO elements.',
+      fix: 'Add a descriptive <title> tag between 50–60 characters that includes your primary keyword.',
     })
-  } else if (title.length < 30) {
+  } else if (titleLen < 30) {
     issues.push({
       id: 'title-too-short',
       severity: 'warning',
       category: 'content',
-      title: 'Title Tag Too Short',
-      description: `Your title is ${title.length} characters. Ideal length is 50-60 characters.`,
-      fix: 'Expand your title to 50-60 characters, including your primary keyword near the beginning.',
-      impact: 7,
+      title: `Page title is too short (${titleLen} chars)`,
+      description: 'Your title tag is shorter than 30 characters. Short titles miss keyword opportunities and display poorly in search results.',
+      fix: 'Expand your title to 50–60 characters. Include your primary keyword near the beginning.',
     })
-    contentScore += 4
-  } else if (title.length > 65) {
+  } else if (titleLen > 60) {
     issues.push({
       id: 'title-too-long',
       severity: 'warning',
       category: 'content',
-      title: 'Title Tag Too Long',
-      description: `Your title is ${title.length} characters. Titles over 60 characters get truncated in search results.`,
+      title: `Page title is too long (${titleLen} chars)`,
+      description: `Your title is ${titleLen} characters. Google typically truncates titles beyond 60 characters in search results.`,
       fix: 'Shorten your title to under 60 characters while keeping your primary keyword.',
-      impact: 6,
     })
-    contentScore += 5
-  } else {
-    contentScore += 8
   }
 
-  // Description checks
-  if (!description) {
+  // --- Meta Description ---
+  const metaDesc = $('meta[name="description"]').attr('content') || ''
+  const descLen = metaDesc.trim().length
+  if (!metaDesc.trim()) {
     issues.push({
-      id: 'no-description',
+      id: 'meta-desc-missing',
       severity: 'critical',
       category: 'content',
-      title: 'Missing Meta Description',
-      description: 'No meta description found. Search engines may generate a random snippet instead.',
-      fix: 'Add a compelling meta description between 150-160 characters that includes your keyword and a call-to-action.',
-      impact: 8,
+      title: 'Missing meta description',
+      description: 'No meta description was found. Meta descriptions appear in search results and heavily influence click-through rates.',
+      fix: 'Add a <meta name="description"> tag with 150–160 characters summarising the page content.',
     })
-  } else if (description.length < 100) {
+  } else if (descLen < 70) {
     issues.push({
-      id: 'description-too-short',
+      id: 'meta-desc-too-short',
       severity: 'warning',
       category: 'content',
-      title: 'Meta Description Too Short',
-      description: `Your meta description is ${description.length} characters. Ideal is 150-160 characters.`,
-      fix: 'Expand your meta description to 150-160 characters with a compelling reason to click.',
-      impact: 5,
+      title: `Meta description is too short (${descLen} chars)`,
+      description: 'Your meta description is shorter than 70 characters, leaving valuable snippet space unused.',
+      fix: 'Expand your meta description to 150–160 characters with a compelling call to action.',
     })
-    contentScore += 5
-  } else if (description.length > 165) {
+  } else if (descLen > 160) {
     issues.push({
-      id: 'description-too-long',
+      id: 'meta-desc-too-long',
       severity: 'warning',
       category: 'content',
-      title: 'Meta Description Too Long',
-      description: `Your meta description is ${description.length} characters. It will be truncated in search results.`,
-      fix: 'Shorten your meta description to under 160 characters.',
-      impact: 4,
+      title: `Meta description is too long (${descLen} chars)`,
+      description: `Your meta description is ${descLen} characters and will be truncated in search results.`,
+      fix: 'Shorten your meta description to 150–160 characters.',
     })
-    contentScore += 6
-  } else {
-    contentScore += 8
   }
 
-  // Word count
+  // --- H1 ---
+  const h1Tags = $('h1')
+  const h1Count = h1Tags.length
+  if (h1Count === 0) {
+    issues.push({
+      id: 'h1-missing',
+      severity: 'critical',
+      category: 'content',
+      title: 'Missing H1 heading',
+      description: 'No H1 heading was found. The H1 is a critical signal that tells search engines what your page is about.',
+      fix: 'Add exactly one H1 tag containing your primary keyword. It should be the main heading of the page.',
+    })
+  } else if (h1Count > 1) {
+    issues.push({
+      id: 'h1-multiple',
+      severity: 'warning',
+      category: 'content',
+      title: `Multiple H1 headings found (${h1Count})`,
+      description: 'Having multiple H1 tags dilutes the SEO signal and can confuse search engines about the main topic.',
+      fix: 'Consolidate to a single H1 tag. Convert other H1s to H2 or H3 as appropriate.',
+    })
+  }
+
+  // --- H2 ---
+  const h2Count = $('h2').length
+  if (h2Count === 0 && h1Count > 0) {
+    issues.push({
+      id: 'h2-missing',
+      severity: 'info',
+      category: 'content',
+      title: 'No H2 headings found',
+      description: 'Using H2 headings to structure your content helps both users and search engines understand your page.',
+      fix: 'Add H2 headings to organise your content into logical sections. Include secondary keywords where natural.',
+    })
+  }
+
+  // --- Images without alt text ---
+  const images = $('img')
+  const imageCount = images.length
+  let missingAlt = 0
+  images.each((_, img) => {
+    const alt = $(img).attr('alt')
+    if (alt === undefined || alt === null || alt.trim() === '') missingAlt++
+  })
+  if (missingAlt > 0) {
+    issues.push({
+      id: 'images-missing-alt',
+      severity: missingAlt > 3 ? 'critical' : 'warning',
+      category: 'technical',
+      title: `${missingAlt} image${missingAlt > 1 ? 's' : ''} missing alt text`,
+      description: `${missingAlt} of ${imageCount} images have no alt attribute. Alt text helps search engines understand images and is essential for accessibility.`,
+      fix: 'Add descriptive alt text to all images. Use keywords naturally but focus on accurately describing the image.',
+    })
+  }
+
+  // --- Canonical ---
+  const canonical = $('link[rel="canonical"]').attr('href') || ''
+  if (!canonical) {
+    issues.push({
+      id: 'canonical-missing',
+      severity: 'warning',
+      category: 'technical',
+      title: 'Missing canonical tag',
+      description: 'No canonical tag was found. Without it, search engines may index duplicate versions of your page.',
+      fix: 'Add <link rel="canonical" href="https://yourdomain.com/page"> in the <head> to specify the preferred URL.',
+    })
+  }
+
+  // --- Viewport meta ---
+  const viewport = $('meta[name="viewport"]').attr('content') || ''
+  if (!viewport) {
+    issues.push({
+      id: 'viewport-missing',
+      severity: 'critical',
+      category: 'technical',
+      title: 'Missing viewport meta tag',
+      description: 'No viewport meta tag found. This means your site may not be mobile-friendly, which is a major ranking factor.',
+      fix: 'Add <meta name="viewport" content="width=device-width, initial-scale=1"> to your <head>.',
+    })
+  }
+
+  // --- Robots meta ---
+  const robotsMeta = $('meta[name="robots"]').attr('content') || ''
+  if (robotsMeta.toLowerCase().includes('noindex')) {
+    issues.push({
+      id: 'robots-noindex',
+      severity: 'critical',
+      category: 'technical',
+      title: 'Page is set to noindex',
+      description: 'A robots meta tag with "noindex" is preventing search engines from indexing this page.',
+      fix: 'Remove "noindex" from the robots meta tag unless you intentionally want this page excluded from search results.',
+    })
+  }
+
+  // --- JSON-LD Schema ---
+  const hasSchema = $('script[type="application/ld+json"]').length > 0
+  if (!hasSchema) {
+    issues.push({
+      id: 'schema-missing',
+      severity: 'warning',
+      category: 'technical',
+      title: 'No structured data (JSON-LD) found',
+      description: 'Structured data helps search engines understand your content and can enable rich results in search (stars, FAQs, etc.).',
+      fix: 'Add JSON-LD structured data relevant to your content type (Organization, Article, Product, FAQ, etc.).',
+    })
+  }
+
+  // --- Open Graph ---
+  const ogTitle = $('meta[property="og:title"]').attr('content') || ''
+  const ogDescription = $('meta[property="og:description"]').attr('content') || ''
+  const ogImage = $('meta[property="og:image"]').attr('content') || ''
+
+  if (!ogTitle || !ogDescription || !ogImage) {
+    const missing = []
+    if (!ogTitle) missing.push('og:title')
+    if (!ogDescription) missing.push('og:description')
+    if (!ogImage) missing.push('og:image')
+    issues.push({
+      id: 'og-incomplete',
+      severity: 'warning',
+      category: 'social',
+      title: `Missing Open Graph tags: ${missing.join(', ')}`,
+      description: 'Open Graph tags control how your page appears when shared on social media. Missing tags result in poor-looking social shares.',
+      fix: `Add the following Open Graph meta tags: ${missing.map(t => `<meta property="${t}" content="...">`).join(', ')}.`,
+    })
+  }
+
+  // --- Twitter Card ---
+  const twitterCard = $('meta[name="twitter:card"]').attr('content') || ''
+  if (!twitterCard) {
+    issues.push({
+      id: 'twitter-card-missing',
+      severity: 'info',
+      category: 'social',
+      title: 'Missing Twitter Card meta tags',
+      description: 'Twitter Card tags control how your page appears when shared on Twitter/X.',
+      fix: 'Add <meta name="twitter:card" content="summary_large_image"> and supporting twitter: meta tags.',
+    })
+  }
+
+  // --- Word count ---
+  const bodyText = $('body').text().replace(/\s+/g, ' ').trim()
+  const wordCount = bodyText.split(' ').filter(w => w.length > 0).length
   if (wordCount < 300) {
     issues.push({
       id: 'thin-content',
       severity: 'critical',
       category: 'content',
-      title: 'Thin Content',
-      description: `Page has only ${wordCount} words. Google prefers substantial content (300+ words minimum).`,
-      fix: 'Add more valuable, unique content to the page. Aim for at least 500-1000 words for competitive topics.',
-      impact: 8,
+      title: `Thin content (${wordCount} words)`,
+      description: 'Pages with fewer than 300 words are often considered thin content by search engines and may rank poorly.',
+      fix: 'Expand your content to at least 500–800 words with substantive, helpful information for your target audience.',
     })
   } else if (wordCount < 600) {
     issues.push({
       id: 'low-word-count',
       severity: 'warning',
       category: 'content',
-      title: 'Low Word Count',
-      description: `Page has ${wordCount} words. For competitive topics, aim for 600+ words.`,
-      fix: 'Add more comprehensive content covering related topics and answering user questions.',
-      impact: 5,
-    })
-    contentScore += 5
-  } else {
-    contentScore += 8
-  }
-
-  // Heading structure
-  if (h2Tags.length === 0 && wordCount > 300) {
-    issues.push({
-      id: 'no-h2',
-      severity: 'warning',
-      category: 'content',
-      title: 'No H2 Subheadings',
-      description: 'No H2 tags found. Subheadings help organize content for users and search engines.',
-      fix: 'Break your content into sections using H2 and H3 tags with relevant keywords.',
-      impact: 5,
-    })
-  } else if (h2Tags.length > 0) {
-    contentScore += 4
-  }
-
-  // Keywords in meta
-  if (!keywords) {
-    issues.push({
-      id: 'no-keywords',
-      severity: 'info',
-      category: 'content',
-      title: 'Missing Keywords Meta Tag',
-      description: 'No keywords meta tag found. While not a direct ranking factor, it can help organize your content strategy.',
-      fix: 'Add a keywords meta tag with 5-10 relevant keywords, though this has minimal SEO impact.',
-      impact: 2,
+      title: `Low word count (${wordCount} words)`,
+      description: 'Your page has fewer than 600 words. Comprehensive content typically ranks better for competitive keywords.',
+      fix: 'Consider expanding your content with more detail, examples, FAQs, or supporting sections.',
     })
   }
 
-  // Image alt tags
-  if (missingAltCount > 0) {
-    issues.push({
-      id: 'missing-alt-tags',
-      severity: missingAltCount > 3 ? 'critical' : 'warning',
-      category: 'content',
-      title: `${missingAltCount} Images Missing Alt Text`,
-      description: `${missingAltCount} out of ${images.length} images are missing alt text. Alt text is crucial for accessibility and image SEO.`,
-      fix: 'Add descriptive alt text to all images, including relevant keywords where appropriate.',
-      impact: missingAltCount > 3 ? 7 : 5,
-    })
-  } else if (images.length > 0) {
-    contentScore += 3
-  }
-
-  // Performance checks
-  if (pageSize > 200000) {
-    performanceScore += 5
-  } else if (pageSize > 0) {
-    performanceScore += 10
-  }
-
-  // Resource estimation
-  const scriptCount = $('script[src]').length
-  const styleCount = $('link[rel="stylesheet"]').length
-
-  if (scriptCount > 15) {
-    issues.push({
-      id: 'too-many-scripts',
-      severity: 'warning',
-      category: 'performance',
-      title: 'Too Many JavaScript Files',
-      description: `Found ${scriptCount} external JavaScript files. Too many scripts slow down page loading.`,
-      fix: 'Bundle and minify JavaScript files. Consider code splitting and lazy loading non-critical scripts.',
-      impact: 6,
-    })
-  } else {
-    performanceScore += 5
-  }
-
-  if (styleCount > 5) {
-    issues.push({
-      id: 'too-many-styles',
-      severity: 'info',
-      category: 'performance',
-      title: 'Multiple Stylesheets',
-      description: `Found ${styleCount} external CSS files. Multiple stylesheets increase render-blocking resources.`,
-      fix: 'Combine CSS files and consider inlining critical CSS for faster rendering.',
-      impact: 4,
-    })
-  } else {
-    performanceScore += 5
-  }
-
-  // Social / OG checks
-  if (!ogTitle) {
-    issues.push({
-      id: 'no-og-title',
-      severity: 'warning',
-      category: 'social',
-      title: 'Missing Open Graph Title',
-      description: 'No og:title meta tag found. This affects how your page appears when shared on social media.',
-      fix: 'Add <meta property="og:title" content="Your Page Title"> to the <head> section.',
-      impact: 5,
-    })
-  } else {
-    socialScore += 3
-  }
-
-  if (!ogDescription) {
-    issues.push({
-      id: 'no-og-description',
-      severity: 'warning',
-      category: 'social',
-      title: 'Missing Open Graph Description',
-      description: 'No og:description meta tag found. Social shares will show a poor preview.',
-      fix: 'Add <meta property="og:description" content="Your description"> to the <head> section.',
-      impact: 4,
-    })
-  } else {
-    socialScore += 3
-  }
-
-  if (!ogImage) {
-    issues.push({
-      id: 'no-og-image',
-      severity: 'warning',
-      category: 'social',
-      title: 'Missing Open Graph Image',
-      description: 'No og:image meta tag found. Posts shared on social media will not have an image.',
-      fix: 'Add <meta property="og:image" content="https://yoursite.com/image.jpg"> with a 1200x630px image.',
-      impact: 5,
-    })
-  } else {
-    socialScore += 4
-  }
-
-  // URL structure check
-  try {
-    const urlObj = new URL(url)
-    const pathname = urlObj.pathname
-    if (pathname.length > 100) {
-      issues.push({
-        id: 'long-url',
-        severity: 'info',
-        category: 'technical',
-        title: 'URL Too Long',
-        description: `URL is ${url.length} characters. Shorter, cleaner URLs are better for SEO.`,
-        fix: 'Keep URLs short and descriptive. Remove unnecessary parameters and use hyphens instead of underscores.',
-        impact: 3,
-      })
+  // --- Links ---
+  const allLinks = $('a[href]')
+  let internalLinks = 0
+  let externalLinks = 0
+  allLinks.each((_, a) => {
+    const href = $(a).attr('href') || ''
+    if (href.startsWith('http') || href.startsWith('//')) {
+      try {
+        const linkUrl = new URL(href.startsWith('//') ? 'https:' + href : href)
+        if (linkUrl.hostname === parsedUrl.hostname) {
+          internalLinks++
+        } else {
+          externalLinks++
+        }
+      } catch {
+        // ignore
+      }
+    } else if (href.startsWith('/') || href.startsWith('./') || href.startsWith('../')) {
+      internalLinks++
     }
-    if (pathname.includes('_')) {
-      issues.push({
-        id: 'url-underscores',
-        severity: 'info',
-        category: 'technical',
-        title: 'URL Contains Underscores',
-        description: 'URLs use underscores instead of hyphens. Hyphens are preferred for readability and SEO.',
-        fix: 'Use hyphens (-) instead of underscores (_) in your URL structure.',
-        impact: 3,
-      })
-    }
-  } catch { /* ignore URL parse errors */ }
-
-  // Sort issues by severity and impact
-  const severityOrder = { critical: 0, warning: 1, info: 2 }
-  issues.sort((a, b) => {
-    const sevDiff = severityOrder[a.severity] - severityOrder[b.severity]
-    if (sevDiff !== 0) return sevDiff
-    return b.impact - a.impact
   })
 
-  // Calculate final score
-  const totalMax = technicalMax + contentMax + performanceMax + socialMax
-  const totalRaw = technicalScore + contentScore + performanceScore + socialScore
-  const score = Math.min(100, Math.max(0, Math.round((totalRaw / totalMax) * 100)))
+  if (internalLinks < 3) {
+    issues.push({
+      id: 'low-internal-links',
+      severity: 'info',
+      category: 'technical',
+      title: `Few internal links (${internalLinks})`,
+      description: 'Internal links help search engines discover your content and distribute page authority across your site.',
+      fix: 'Add links to related pages on your site within the content. Aim for at least 3–5 contextual internal links.',
+    })
+  }
+
+  // --- Page size estimate ---
+  const pageSizeKb = Math.round(Buffer.byteLength(html, 'utf8') / 1024)
+  if (pageSizeKb > 200) {
+    issues.push({
+      id: 'large-page-size',
+      severity: 'warning',
+      category: 'performance',
+      title: `Large page size (${pageSizeKb}KB HTML)`,
+      description: 'Large HTML pages take longer to load, increasing time-to-first-byte and hurting Core Web Vitals.',
+      fix: 'Minimise your HTML, remove unnecessary inline scripts/styles, and lazy-load non-critical content.',
+    })
+  }
+
+  // --- Favicon ---
+  const favicon = $('link[rel="icon"], link[rel="shortcut icon"]').attr('href') || ''
+  if (!favicon) {
+    issues.push({
+      id: 'favicon-missing',
+      severity: 'info',
+      category: 'technical',
+      title: 'No favicon found',
+      description: 'A favicon improves brand recognition in browser tabs and bookmarks.',
+      fix: 'Add <link rel="icon" href="/favicon.ico"> to your <head>.',
+    })
+  }
+
+  // --- Heading hierarchy ---
+  const hasH3WithoutH2 = $('h3').length > 0 && h2Count === 0
+  if (hasH3WithoutH2) {
+    issues.push({
+      id: 'heading-hierarchy',
+      severity: 'info',
+      category: 'content',
+      title: 'Inconsistent heading hierarchy',
+      description: 'H3 headings were found without any H2 headings. Proper heading hierarchy improves both SEO and accessibility.',
+      fix: 'Structure headings logically: H1 → H2 → H3. Do not skip heading levels.',
+    })
+  }
+
+  // --- Keyword in title & H1 (basic check) ---
+  if (title && h1Count > 0) {
+    const h1Text = $('h1').first().text().trim().toLowerCase()
+    const titleWords = title.toLowerCase().split(' ').filter(w => w.length > 4)
+    const h1Words = h1Text.split(' ').filter(w => w.length > 4)
+    const overlap = titleWords.filter(w => h1Words.includes(w))
+    if (overlap.length === 0 && titleWords.length > 0) {
+      issues.push({
+        id: 'title-h1-mismatch',
+        severity: 'warning',
+        category: 'content',
+        title: 'Title and H1 keywords don\'t align',
+        description: 'Your page title and H1 heading share no common keywords. Aligning them reinforces your target keyword to search engines.',
+        fix: 'Ensure your primary keyword appears in both the title tag and H1 heading.',
+      })
+    }
+  }
+
+  // --- Calculate scores per category ---
+  const technicalIssues = issues.filter(i => i.category === 'technical')
+  const contentIssues = issues.filter(i => i.category === 'content')
+  const socialIssues = issues.filter(i => i.category === 'social')
+  const performanceIssues = issues.filter(i => i.category === 'performance')
+
+  function categoryScore(categoryIssues: Issue[]): number {
+    let deduction = 0
+    categoryIssues.forEach(i => {
+      if (i.severity === 'critical') deduction += 25
+      else if (i.severity === 'warning') deduction += 12
+      else deduction += 5
+    })
+    return Math.max(0, 100 - deduction)
+  }
+
+  const categories = {
+    technical: categoryScore(technicalIssues),
+    content: categoryScore(contentIssues),
+    social: categoryScore(socialIssues),
+    performance: categoryScore(performanceIssues),
+  }
+
+  // Weighted overall score
+  const score = Math.round(
+    categories.technical * 0.35 +
+    categories.content * 0.35 +
+    categories.social * 0.15 +
+    categories.performance * 0.15
+  )
 
   return {
     score,
     allIssues: issues,
-    categories: {
-      technical: {
-        score: Math.round((technicalScore / technicalMax) * 100),
-        maxScore: 100,
-        label: 'Technical SEO',
-      },
-      content: {
-        score: Math.round((contentScore / contentMax) * 100),
-        maxScore: 100,
-        label: 'Content Quality',
-      },
-      performance: {
-        score: Math.round((performanceScore / performanceMax) * 100),
-        maxScore: 100,
-        label: 'Performance',
-      },
-      social: {
-        score: Math.round((socialScore / socialMax) * 100),
-        maxScore: 100,
-        label: 'Social & OG',
-      },
-    },
+    categories,
     metadata: {
       title,
-      description,
+      description: metaDesc,
       wordCount,
-      imageCount: images.length,
-      linkCount: internalLinks + externalLinks,
+      imageCount,
+      url,
+      h1Count,
+      h2Count,
       internalLinks,
       externalLinks,
-      h1Count: h1Tags.length,
-      h2Count: h2Tags.length,
       hasSchema,
       hasCanonical: !!canonical,
-      hasViewport: !!viewportMeta,
-      hasRobots: !!robotsMeta,
       isHttps,
-      pageSize,
-      missingAltCount,
-      ogTitle,
-      ogDescription,
-      ogImage,
     },
-    html,
   }
 }

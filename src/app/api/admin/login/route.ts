@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import {
-  verifyAdminPassword,
-  generateAdminToken,
-  getAdminCookieOptions,
-} from '@/lib/admin-auth'
+import { verifyAdminPassword, signAdminToken, COOKIE_OPTIONS } from '@/lib/admin-auth'
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,24 +10,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Password is required' }, { status: 400 })
     }
 
-    const isValid = await verifyAdminPassword(password)
-
-    if (!isValid) {
+    const valid = await verifyAdminPassword(password)
+    if (!valid) {
       return NextResponse.json({ error: 'Invalid password' }, { status: 401 })
     }
 
-    const token = generateAdminToken()
-    const cookieOptions = getAdminCookieOptions()
+    const token = signAdminToken()
 
     const response = NextResponse.json({ success: true })
     response.cookies.set({
-      ...cookieOptions,
+      ...COOKIE_OPTIONS,
       value: token,
     })
 
     return response
-  } catch (error) {
-    console.error('Admin login error:', error)
-    return NextResponse.json({ error: 'Login failed' }, { status: 500 })
+  } catch (err) {
+    console.error('Admin login error:', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

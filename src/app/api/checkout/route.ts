@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createCheckoutSession } from '@/lib/stripe'
-import prisma from '@/lib/db'
+import { db } from '@/lib/db'
+import { analyses } from '@/lib/db/schema'
+import { stripe } from '@/lib/stripe'
+import { eq } from 'drizzle-orm'
 
 export async function POST(request: NextRequest) {
   try {
@@ -8,55 +10,103 @@ export async function POST(request: NextRequest) {
     const { analysisId, email, name, type } = body
 
     if (!analysisId || !email || !type) {
-      return NextResponse.json(
-        { error: 'Analysis ID, email, and type are required' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    if (!['one-time', 'subscription'].includes(type)) {
-      return NextResponse.json(
-        { error: 'Invalid type. Must be one-time or subscription' },
-        { status: 400 }
-      )
+    if (type !== 'one-time' && type !== 'subscription') {
+      return NextResponse.json({ error: 'Invalid type' }, { status: 400 })
     }
-
-    // Verify analysis exists
-    const analysis = await prisma.analysis.findUnique({
-      where: { id: analysisId },
-    })
-
-    if (!analysis) {
-      return NextResponse.json({ error: 'Analysis not found' }, { status: 404 })
-    }
-
-    // Update email/name
-    await prisma.analysis.update({
-      where: { id: analysisId },
-      data: { email, name: name || null },
-    })
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
 
-    const session = await createCheckoutSession({
-      analysisId,
-      email,
-      type,
-      baseUrl,
-    })
+    // Find the analysis
+    let analysis
+    try {
+      const results = await db.select().from(analyses).where(eq(analyses.id, analysisId))
+      analysis = results[0]
+    } catch {
+      // DB might not be configured in dev
+      analysis = { id: analysisId, url: '' }
+    }
 
-    // Store session ID
-    await prisma.analysis.update({
-      where: { id: analysisId },
-      data: { stripeSessionId: session.id, reportType: type },
-    })
+    // Update email/name
+    try {
+      await db
+        .update(analyses)
+        .set({ email, name: name || null, updatedAt: new Date() })
+        .where(eq(analyses.id, analysisId))
+    } catch {
+      // ignore DB errors in dev
+    }
 
-    return NextResponse.json({ url: session.url, sessionId: session.id })
-  } catch (error) {
-    console.error('Checkout error:', error)
-    return NextResponse.json(
-      { error: 'Failed to create checkout session. Please try again.' },
-      { status: 500 }
-    )
+    // Create Stripe checkout session
+    const analysisUrl = analysis?.url || ''
+
+    let session
+    if (type === 'one-time') {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'usd',
+              product_data: {
+                name: 'SEO Audit Report — Full Analysis',
+                description: `Complete SEO & AI search audit for ${analysisUrl}`,
+              },
+              unit_amount: 19900,
+            },
+            quantity: 1,
+          },
+        ],
+        metadata: {
+          analysisId,
+          reportType: 'one-time',
+        },
+        success_url: `${baseUrl}/report/${analysisId}?success=true`,
+        cancel_url: `${baseUrl}/analyze?url=${encodeURIComponent(analysisUrl)}`,
+      })
+    } else {
+      session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer_email: email,
+        line_items: [
+          {
+            price_data: {
+              currency: 'usd',
+              product_data: {
+                name: 'Monthly SEO Audit',
+                description: 'Monthly comprehensive SEO & AI search audit',
+              },
+              recurring: { interval: 'month' },
+              unit_amount: 4900,
+            },
+            quantity: 1,
+          },
+        ],
+        metadata: {
+          analysisId,
+          reportType: 'subscription',
+        },
+        success_url: `${baseUrl}/report/${analysisId}?success=true`,
+        cancel_url: `${baseUrl}/analyze?url=${encodeURIComponent(analysisUrl)}`,
+      })
+    }
+
+    // Update analysis with Stripe session ID
+    try {
+      await db
+        .update(analyses)
+        .set({ stripeSessionId: session.id, updatedAt: new Date() })
+        .where(eq(analyses.id, analysisId))
+    } catch {
+      // ignore
+    }
+
+    return NextResponse.json({ url: session.url })
+  } catch (err) {
+    console.error('Checkout error:', err)
+    return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 })
   }
 }

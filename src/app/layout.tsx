@@ -1,32 +1,25 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
 import './globals.css'
-
-const inter = Inter({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-inter',
-})
 
 export const metadata: Metadata = {
   title: 'SEO Audit Pro — Instant SEO & AI Search Analysis',
-  description: 'Get your free SEO score in seconds. Then unlock a full audit with prioritized fixes, AI search optimization, competitor analysis, and a 90-day action plan.',
-  keywords: 'SEO audit, AI search optimization, website analysis, Google ranking, SEO score',
+  description: 'Find out why your website is invisible to Google and AI search engines. Get a comprehensive SEO audit with actionable fix recommendations in minutes.',
+  keywords: 'SEO audit, AI search optimisation, website analysis, Google ranking, search visibility',
   openGraph: {
     title: 'SEO Audit Pro — Instant SEO & AI Search Analysis',
-    description: 'Find out exactly why your site is invisible to Google and AI search engines.',
+    description: 'Find out why your website is invisible to Google and AI search engines.',
     type: 'website',
   },
 }
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode
-}>) {
+}) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body className="antialiased">
+    <html lang="en" className="bg-slate-900">
+      <body className="min-h-screen bg-slate-900 text-slate-50 antialiased">
         {children}
       </body>
     </html>

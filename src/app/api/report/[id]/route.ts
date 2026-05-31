@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/db'
+import { db } from '@/lib/db'
+import { analyses } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = await params
+    const { id } = params
 
-    const analysis = await prisma.analysis.findUnique({
-      where: { id },
-    })
+    const results = await db.select().from(analyses).where(eq(analyses.id, id))
+    const analysis = results[0]
 
     if (!analysis) {
       return NextResponse.json({ error: 'Report not found' }, { status: 404 })
@@ -21,11 +22,7 @@ export async function GET(
     }
 
     if (!analysis.fullReport) {
-      // Report is being generated
-      return NextResponse.json(
-        { error: 'Report is being generated. Please wait a moment.' },
-        { status: 202 }
-      )
+      return NextResponse.json({ error: 'Report is being generated, please try again shortly' }, { status: 202 })
     }
 
     const fullReport = JSON.parse(analysis.fullReport)
@@ -37,12 +34,12 @@ export async function GET(
       email: analysis.email,
       name: analysis.name,
       reportType: analysis.reportType,
-      paidAt: analysis.paidAt,
       createdAt: analysis.createdAt,
-      report: fullReport,
+      paidAt: analysis.paidAt,
+      ...fullReport,
     })
-  } catch (error) {
-    console.error('Report fetch error:', error)
+  } catch (err) {
+    console.error('Report fetch error:', err)
     return NextResponse.json({ error: 'Failed to fetch report' }, { status: 500 })
   }
 }

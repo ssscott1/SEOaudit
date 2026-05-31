@@ -1,166 +1,188 @@
 'use client'
 
 import { useState } from 'react'
-import UserDetail from './UserDetail'
 
-interface Analysis {
+interface AnalysisRow {
   id: string
   url: string
-  email: string | null
-  name: string | null
+  email?: string | null
+  name?: string | null
   score: number
   paid: boolean
-  paidAt: string | null
-  reportType: string | null
+  reportType?: string | null
+  paidAt?: string | null
   pdfSent: boolean
   createdAt: string
 }
 
 interface AnalysisTableProps {
-  analyses: Analysis[]
-  loading: boolean
-  total: number
-  page: number
-  onPageChange: (page: number) => void
+  analyses: AnalysisRow[]
+  onSelect: (id: string) => void
 }
 
-function ScoreBadge({ score }: { score: number }) {
-  const color = score >= 80 ? 'text-green-400 bg-green-900/30 border-green-800'
-    : score >= 60 ? 'text-yellow-400 bg-yellow-900/30 border-yellow-800'
-    : score >= 40 ? 'text-orange-400 bg-orange-900/30 border-orange-800'
-    : 'text-red-400 bg-red-900/30 border-red-800'
+function downloadCSV(data: AnalysisRow[]) {
+  const headers = ['ID', 'URL', 'Email', 'Name', 'Score', 'Paid', 'Type', 'Paid At', 'PDF Sent', 'Created At']
+  const rows = data.map(a => [
+    a.id,
+    a.url,
+    a.email || '',
+    a.name || '',
+    a.score,
+    a.paid ? 'Yes' : 'No',
+    a.reportType || '',
+    a.paidAt ? new Date(a.paidAt).toISOString() : '',
+    a.pdfSent ? 'Yes' : 'No',
+    new Date(a.createdAt).toISOString(),
+  ])
 
-  return (
-    <span className={`text-xs font-bold px-2 py-1 rounded border ${color}`}>
-      {score}
-    </span>
-  )
+  const csv = [headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n')
+
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `seo-audit-analyses-${new Date().toISOString().split('T')[0]}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
-export default function AnalysisTable({ analyses, loading, total, page, onPageChange }: AnalysisTableProps) {
-  const [selectedAnalysis, setSelectedAnalysis] = useState<Analysis | null>(null)
-  const limit = 20
-  const totalPages = Math.ceil(total / limit)
+export default function AnalysisTable({ analyses, onSelect }: AnalysisTableProps) {
+  const [search, setSearch] = useState('')
+  const [sortField, setSortField] = useState<keyof AnalysisRow>('createdAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [filterPaid, setFilterPaid] = useState<'all' | 'paid' | 'unpaid'>('all')
 
-  if (selectedAnalysis) {
-    return <UserDetail analysis={selectedAnalysis} onBack={() => setSelectedAnalysis(null)} />
+  const filtered = analyses
+    .filter(a => {
+      const q = search.toLowerCase()
+      const matchSearch = !q || a.url.toLowerCase().includes(q) || (a.email || '').toLowerCase().includes(q) || (a.name || '').toLowerCase().includes(q)
+      const matchPaid = filterPaid === 'all' || (filterPaid === 'paid' ? a.paid : !a.paid)
+      return matchSearch && matchPaid
+    })
+    .sort((a, b) => {
+      const av = a[sortField]
+      const bv = b[sortField]
+      const dir = sortDir === 'asc' ? 1 : -1
+      if (av === null || av === undefined) return dir
+      if (bv === null || bv === undefined) return -dir
+      if (typeof av === 'string' && typeof bv === 'string') return dir * av.localeCompare(bv)
+      if (typeof av === 'number' && typeof bv === 'number') return dir * (av - bv)
+      if (typeof av === 'boolean' && typeof bv === 'boolean') return dir * (Number(av) - Number(bv))
+      return 0
+    })
+
+  const handleSort = (field: keyof AnalysisRow) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }
+
+  const SortIcon = ({ field }: { field: keyof AnalysisRow }) => {
+    if (sortField !== field) return <span className="text-slate-600 ml-1">↕</span>
+    return <span className="text-teal-400 ml-1">{sortDir === 'asc' ? '↑' : '↓'}</span>
   }
 
   return (
-    <div className="bg-[#1E293B] border border-[#334155] rounded-xl overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full">
+    <div className="space-y-4">
+      {/* Controls */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search URL, email, name..."
+          className="flex-1 px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-50 placeholder-slate-500 focus:outline-none focus:border-teal-500 text-sm"
+        />
+        <select
+          value={filterPaid}
+          onChange={e => setFilterPaid(e.target.value as 'all' | 'paid' | 'unpaid')}
+          className="px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-50 focus:outline-none focus:border-teal-500 text-sm"
+        >
+          <option value="all">All Status</option>
+          <option value="paid">Paid Only</option>
+          <option value="unpaid">Unpaid Only</option>
+        </select>
+        <button
+          onClick={() => downloadCSV(filtered)}
+          className="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
+        >
+          Export CSV
+        </button>
+      </div>
+
+      <p className="text-slate-500 text-xs">{filtered.length} records</p>
+
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-slate-700">
+        <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[#334155]">
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3">URL</th>
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Email</th>
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Score</th>
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Status</th>
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Type</th>
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Revenue</th>
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3">Date</th>
-              <th className="text-left text-xs text-gray-400 uppercase tracking-wider px-4 py-3"></th>
+            <tr className="bg-slate-900 border-b border-slate-700">
+              {([
+                { key: 'createdAt', label: 'Date' },
+                { key: 'url', label: 'URL' },
+                { key: 'email', label: 'Email' },
+                { key: 'score', label: 'Score' },
+                { key: 'paid', label: 'Paid' },
+                { key: 'reportType', label: 'Type' },
+              ] as const).map(col => (
+                <th
+                  key={col.key}
+                  onClick={() => handleSort(col.key)}
+                  className="px-4 py-3 text-left text-slate-400 font-medium cursor-pointer hover:text-slate-200 select-none"
+                >
+                  {col.label}<SortIcon field={col.key} />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              [...Array(5)].map((_, i) => (
-                <tr key={i} className="border-b border-[#334155]">
-                  {[...Array(8)].map((_, j) => (
-                    <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-[#334155] rounded animate-pulse" />
-                    </td>
-                  ))}
-                </tr>
-              ))
-            ) : analyses.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
-                  No analyses found
+            {filtered.map((row, i) => (
+              <tr
+                key={row.id}
+                onClick={() => onSelect(row.id)}
+                className={`border-b border-slate-700/50 cursor-pointer hover:bg-slate-700/30 transition-colors ${i % 2 === 0 ? 'bg-slate-800' : 'bg-slate-800/50'}`}
+              >
+                <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
+                  {new Date(row.createdAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: '2-digit' })}
+                </td>
+                <td className="px-4 py-3 text-teal-400 max-w-xs truncate">
+                  <span title={row.url}>{row.url.replace(/^https?:\/\//, '')}</span>
+                </td>
+                <td className="px-4 py-3 text-slate-400 max-w-xs truncate">
+                  {row.email || <span className="text-slate-600">—</span>}
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`font-bold ${row.score >= 70 ? 'text-emerald-400' : row.score >= 40 ? 'text-amber-400' : 'text-red-400'}`}
+                  >
+                    {row.score}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${row.paid ? 'bg-emerald-400/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
+                    {row.paid ? 'Paid' : 'Free'}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-slate-400 capitalize">
+                  {row.reportType || <span className="text-slate-600">—</span>}
                 </td>
               </tr>
-            ) : (
-              analyses.map((analysis) => (
-                <tr
-                  key={analysis.id}
-                  className="border-b border-[#334155] hover:bg-[#0F172A] cursor-pointer transition-colors"
-                  onClick={() => setSelectedAnalysis(analysis)}
-                >
-                  <td className="px-4 py-3">
-                    <p className="text-teal-400 text-sm font-medium truncate max-w-[200px]">
-                      {analysis.url.replace('https://', '').replace('http://', '')}
-                    </p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="text-gray-300 text-sm truncate max-w-[150px]">
-                      {analysis.email || <span className="text-gray-600">—</span>}
-                    </p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <ScoreBadge score={analysis.score} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium px-2 py-1 rounded ${
-                      analysis.paid
-                        ? 'text-green-400 bg-green-900/30 border border-green-800'
-                        : 'text-gray-400 bg-[#334155]/50 border border-[#334155]'
-                    }`}>
-                      {analysis.paid ? 'Paid' : 'Free'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-gray-400 text-sm capitalize">
-                      {analysis.reportType || '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-sm font-medium ${analysis.paid ? 'text-green-400' : 'text-gray-600'}`}>
-                      {analysis.paid
-                        ? `$${analysis.reportType === 'one-time' ? '199' : '49'}`
-                        : '$0'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-gray-400 text-sm">
-                      {new Date(analysis.createdAt).toLocaleDateString()}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </td>
-                </tr>
-              ))
+            ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-slate-500">No records found</td>
+              </tr>
             )}
           </tbody>
         </table>
       </div>
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between px-4 py-3 border-t border-[#334155]">
-          <p className="text-gray-400 text-sm">
-            Showing {((page - 1) * limit) + 1}–{Math.min(page * limit, total)} of {total}
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => onPageChange(page - 1)}
-              disabled={page <= 1}
-              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white disabled:opacity-40 bg-[#0F172A] border border-[#334155] rounded-lg transition-colors"
-            >
-              Previous
-            </button>
-            <button
-              onClick={() => onPageChange(page + 1)}
-              disabled={page >= totalPages}
-              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white disabled:opacity-40 bg-[#0F172A] border border-[#334155] rounded-lg transition-colors"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

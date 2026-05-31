@@ -1,62 +1,55 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import AnalysisTable from './AnalysisTable'
+import UserDetail from './UserDetail'
 
-interface Stats {
-  total: number
-  paid: number
-  conversionRate: string
-  totalRevenue: number
-}
-
-interface Analysis {
+interface AnalysisRow {
   id: string
   url: string
-  email: string | null
-  name: string | null
+  email?: string | null
+  name?: string | null
   score: number
   paid: boolean
-  paidAt: string | null
-  reportType: string | null
+  reportType?: string | null
+  paidAt?: string | null
   pdfSent: boolean
   createdAt: string
 }
 
+interface Stats {
+  total: number
+  paid: number
+  conversionRate: number
+  revenue: number
+}
+
 export default function Dashboard() {
+  const [analyses, setAnalyses] = useState<AnalysisRow[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
-  const [analyses, setAnalyses] = useState<Analysis[]>([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [paidFilter, setPaidFilter] = useState<string>('')
+  const [error, setError] = useState('')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const router = useRouter()
 
   const fetchData = useCallback(async () => {
-    setLoading(true)
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        limit: '20',
-      })
-      if (search) params.set('search', search)
-      if (paidFilter) params.set('paid', paidFilter)
-
-      const response = await fetch(`/api/admin/data?${params}`)
-      if (response.status === 401) {
-        window.location.href = '/admin'
+      const res = await fetch('/api/admin/data')
+      if (res.status === 401) {
+        router.push('/admin')
         return
       }
-      const data = await response.json()
-      setStats(data.stats)
+      if (!res.ok) throw new Error('Failed to load data')
+      const data = await res.json()
       setAnalyses(data.analyses)
-      setTotal(data.total)
-    } catch (error) {
-      console.error('Failed to fetch data:', error)
+      setStats(data.stats)
+    } catch {
+      setError('Failed to load dashboard data. Please refresh.')
     } finally {
       setLoading(false)
     }
-  }, [page, search, paidFilter])
+  }, [router])
 
   useEffect(() => {
     fetchData()
@@ -64,128 +57,104 @@ export default function Dashboard() {
 
   const handleLogout = async () => {
     await fetch('/api/admin/logout', { method: 'POST' })
-    window.location.href = '/admin'
+    router.push('/admin')
   }
 
-  const handleExportCSV = () => {
-    const headers = ['ID', 'URL', 'Email', 'Name', 'Score', 'Paid', 'Type', 'Revenue', 'Date']
-    const rows = analyses.map(a => [
-      a.id,
-      a.url,
-      a.email || '',
-      a.name || '',
-      a.score,
-      a.paid ? 'Yes' : 'No',
-      a.reportType || '',
-      a.paid ? (a.reportType === 'one-time' ? 199 : 49) : 0,
-      new Date(a.createdAt).toLocaleDateString(),
-    ])
+  const selectedAnalysis = selectedId ? analyses.find(a => a.id === selectedId) : null
 
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `seo-audit-data-${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="flex items-center gap-3 text-slate-400">
+          <svg className="animate-spin h-6 w-6" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Loading dashboard...
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-[#0F172A]">
-      {/* Top nav */}
-      <div className="bg-[#1E293B] border-b border-[#334155]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-[#0D9488] rounded-lg flex items-center justify-center">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-              <span className="text-white font-bold text-lg">SEO Audit Pro</span>
-              <span className="text-gray-500 text-sm">/ Admin</span>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="text-gray-400 hover:text-white text-sm flex items-center gap-2 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              Logout
-            </button>
+    <div className="min-h-screen bg-slate-900 p-6">
+      {/* Header */}
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-slate-50 text-2xl font-bold">Admin Dashboard</h1>
+            <p className="text-slate-400 text-sm mt-1">SEO Audit Pro — CMS</p>
           </div>
+          <button
+            onClick={handleLogout}
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm font-medium transition-colors"
+          >
+            Log Out
+          </button>
         </div>
-      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats tiles */}
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-6">
-              <p className="text-gray-400 text-sm mb-1">Total Analyses</p>
-              <p className="text-3xl font-bold text-white">{stats.total.toLocaleString()}</p>
-            </div>
-            <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-6">
-              <p className="text-gray-400 text-sm mb-1">Paid Reports</p>
-              <p className="text-3xl font-bold text-teal-400">{stats.paid.toLocaleString()}</p>
-            </div>
-            <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-6">
-              <p className="text-gray-400 text-sm mb-1">Conversion Rate</p>
-              <p className="text-3xl font-bold text-white">{stats.conversionRate}%</p>
-            </div>
-            <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-6">
-              <p className="text-gray-400 text-sm mb-1">Total Revenue</p>
-              <p className="text-3xl font-bold text-green-400">${stats.totalRevenue.toLocaleString()}</p>
-            </div>
+        {error && (
+          <div className="bg-red-400/10 border border-red-400/30 rounded-xl p-4 mb-6 text-red-400 text-sm">
+            {error}
           </div>
         )}
 
-        {/* Filters and search */}
-        <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-                placeholder="Search by URL, email, or name..."
-                className="w-full px-4 py-2.5 bg-[#0F172A] border border-[#334155] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-[#0D9488] text-sm transition-colors"
-              />
-            </div>
-            <div className="flex gap-3">
-              <select
-                value={paidFilter}
-                onChange={(e) => { setPaidFilter(e.target.value); setPage(1) }}
-                className="px-4 py-2.5 bg-[#0F172A] border border-[#334155] rounded-lg text-white text-sm focus:outline-none focus:border-[#0D9488] transition-colors"
-              >
-                <option value="">All Status</option>
-                <option value="true">Paid</option>
-                <option value="false">Free</option>
-              </select>
-              <button
-                onClick={handleExportCSV}
-                className="px-4 py-2.5 bg-[#0D9488] hover:bg-[#0F766E] text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Export CSV
-              </button>
-            </div>
+        {/* Stats tiles */}
+        {stats && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+            <StatTile
+              label="Total Analyses"
+              value={String(stats.total)}
+              icon="📊"
+              color="text-slate-50"
+            />
+            <StatTile
+              label="Paid Reports"
+              value={String(stats.paid)}
+              icon="💳"
+              color="text-emerald-400"
+            />
+            <StatTile
+              label="Conversion Rate"
+              value={`${stats.conversionRate}%`}
+              icon="📈"
+              color="text-teal-400"
+            />
+            <StatTile
+              label="Total Revenue"
+              value={`$${stats.revenue.toLocaleString()}`}
+              icon="💰"
+              color="text-amber-400"
+            />
           </div>
-        </div>
+        )}
 
         {/* Table */}
-        <AnalysisTable
-          analyses={analyses}
-          loading={loading}
-          total={total}
-          page={page}
-          onPageChange={setPage}
-        />
+        <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700">
+          <h2 className="text-slate-50 font-semibold mb-4">All Analyses</h2>
+          <AnalysisTable analyses={analyses} onSelect={setSelectedId} />
+        </div>
       </div>
+
+      {/* Detail modal */}
+      {selectedAnalysis && (
+        <UserDetail analysis={selectedAnalysis} onClose={() => setSelectedId(null)} />
+      )}
+    </div>
+  )
+}
+
+function StatTile({ label, value, icon, color }: {
+  label: string
+  value: string
+  icon: string
+  color: string
+}) {
+  return (
+    <div className="bg-slate-800 rounded-xl p-5 border border-slate-700 hover:shadow-lg hover:shadow-teal-900/20 transition-all">
+      <div className="text-2xl mb-2">{icon}</div>
+      <p className={`text-2xl font-bold ${color}`}>{value}</p>
+      <p className="text-slate-500 text-sm mt-1">{label}</p>
     </div>
   )
 }

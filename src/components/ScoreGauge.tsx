@@ -3,104 +3,87 @@
 interface ScoreGaugeProps {
   score: number
   size?: 'sm' | 'md' | 'lg'
+  showLabel?: boolean
 }
 
-export default function ScoreGauge({ score, size = 'md' }: ScoreGaugeProps) {
-  const sizes = {
-    sm: { svg: 120, cx: 60, cy: 60, r: 50, stroke: 8, fontSize: 28, labelSize: 12 },
-    md: { svg: 200, cx: 100, cy: 100, r: 80, stroke: 12, fontSize: 48, labelSize: 14 },
-    lg: { svg: 280, cx: 140, cy: 140, r: 120, stroke: 16, fontSize: 64, labelSize: 16 },
+export default function ScoreGauge({ score, size = 'lg', showLabel = true }: ScoreGaugeProps) {
+  const clampedScore = Math.max(0, Math.min(100, score))
+
+  const sizeMap = {
+    sm: { outer: 80, stroke: 6, fontSize: 'text-2xl', labelSize: 'text-xs' },
+    md: { outer: 120, stroke: 8, fontSize: 'text-3xl', labelSize: 'text-sm' },
+    lg: { outer: 160, stroke: 10, fontSize: 'text-5xl', labelSize: 'text-base' },
   }
 
-  const s = sizes[size]
-  const circumference = 2 * Math.PI * s.r
-  const progress = (score / 100) * circumference
-  const dashOffset = circumference - progress
+  const { outer, stroke, fontSize, labelSize } = sizeMap[size]
+  const radius = (outer - stroke * 2) / 2
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (clampedScore / 100) * circumference
 
-  const getColor = (score: number) => {
-    if (score >= 80) return '#10B981' // green
-    if (score >= 60) return '#F59E0B' // yellow
-    if (score >= 40) return '#F97316' // orange
-    return '#EF4444' // red
+  const getColor = (s: number) => {
+    if (s >= 70) return '#10b981' // emerald
+    if (s >= 40) return '#f59e0b' // amber
+    return '#ef4444' // red
   }
 
-  const getGrade = (score: number) => {
-    if (score >= 90) return 'A+'
-    if (score >= 80) return 'A'
-    if (score >= 70) return 'B'
-    if (score >= 60) return 'C'
-    if (score >= 50) return 'D'
-    return 'F'
+  const getLabel = (s: number) => {
+    if (s >= 80) return 'Excellent'
+    if (s >= 70) return 'Good'
+    if (s >= 50) return 'Needs Work'
+    if (s >= 30) return 'Poor'
+    return 'Critical'
   }
 
-  const color = getColor(score)
-  const grade = getGrade(score)
+  const color = getColor(clampedScore)
+  const cx = outer / 2
+  const cy = outer / 2
 
   return (
-    <div className="flex flex-col items-center">
-      <svg width={s.svg} height={s.svg} className="transform -rotate-90">
-        {/* Background circle */}
-        <circle
-          cx={s.cx}
-          cy={s.cy}
-          r={s.r}
-          fill="none"
-          stroke="#334155"
-          strokeWidth={s.stroke}
-        />
-        {/* Progress circle */}
-        <circle
-          cx={s.cx}
-          cy={s.cy}
-          r={s.r}
-          fill="none"
-          stroke={color}
-          strokeWidth={s.stroke}
-          strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
-          strokeLinecap="round"
-          style={{ transition: 'stroke-dashoffset 1s ease-in-out' }}
-        />
-        {/* Center text */}
-        <text
-          x={s.cx}
-          y={s.cy - 8}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          className="transform rotate-90"
-          style={{
-            transform: `rotate(90deg)`,
-            transformOrigin: `${s.cx}px ${s.cy}px`,
-            fill: color,
-            fontSize: s.fontSize,
-            fontWeight: 'bold',
-            fontFamily: 'Inter, Arial, sans-serif',
-          }}
+    <div className="flex flex-col items-center gap-2">
+      <div className="relative" style={{ width: outer, height: outer }}>
+        <svg
+          width={outer}
+          height={outer}
+          className="-rotate-90"
+          style={{ transform: 'rotate(-90deg)' }}
         >
-          {score}
-        </text>
-        <text
-          x={s.cx}
-          y={s.cy + s.fontSize / 2 + 4}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          style={{
-            transform: `rotate(90deg)`,
-            transformOrigin: `${s.cx}px ${s.cy}px`,
-            fill: '#94A3B8',
-            fontSize: s.labelSize,
-            fontFamily: 'Inter, Arial, sans-serif',
-          }}
-        >
-          / 100
-        </text>
-      </svg>
-      <div
-        className="mt-2 text-sm font-bold px-3 py-1 rounded-full"
-        style={{ backgroundColor: `${color}20`, color }}
-      >
-        Grade: {grade}
+          {/* Background track */}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={radius}
+            fill="none"
+            stroke="#1e293b"
+            strokeWidth={stroke}
+          />
+          {/* Progress */}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth={stroke}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 1s ease-in-out' }}
+          />
+        </svg>
+        {/* Score text in center */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className={`font-bold text-slate-50 ${fontSize}`}>{clampedScore}</span>
+          <span className={`text-slate-400 ${labelSize}`}>/100</span>
+        </div>
       </div>
+      {showLabel && (
+        <span
+          className={`font-semibold ${labelSize}`}
+          style={{ color }}
+        >
+          {getLabel(clampedScore)}
+        </span>
+      )}
     </div>
   )
 }
